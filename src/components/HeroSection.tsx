@@ -7,7 +7,6 @@ import hero from "../assets/user.png";
 const HeroSection = () => {
   return (
     <div className="min-h-screen relative overflow-hidden bg-gradient-to-br from-[#0d1f12] via-[#1a3b2a] to-[#0D4715] flex items-center justify-center">
-      {/* Matrix-like background */}
       <div className="absolute inset-0 bg-[url('/matrix-pattern.svg')] opacity-10" />
 
       <div className="container mx-auto px-4 relative z-10">
@@ -26,7 +25,7 @@ const HeroSection = () => {
             </h1>
 
             <p className="text-lg lg:text-xl text-[#88c999] max-w-[600px] mx-auto lg:mx-0 mb-8 font-mono">
-              {"//"} Building pixel-perfect mobile experiences
+              {"//"} Building user-friendly mobile applications
             </p>
 
             <button className="bg-[#50fa7b] text-[#0d1f12] px-8 py-3 rounded-md font-medium hover:bg-[#3ecf6a] transition-colors duration-300 font-mono">
@@ -34,7 +33,6 @@ const HeroSection = () => {
             </button>
           </div>
 
-          {/* Terminal-style image container */}
           <div className="flex-1 flex justify-center lg:justify-end">
             <div className="relative w-[350px] h-[350px] bg-[#0d1f12] rounded-xl border-2 border-[#50fa7b]/30 p-2 shadow-2xl">
               <div className="absolute inset-0 bg-green-900/10 rounded-xl" />
