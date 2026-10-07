@@ -1,6 +1,6 @@
-import { ROW_UNITS } from "@/components/keyboard/layout";
-import type { KeyDef } from "@/components/keyboard/layout";
-import { THOCK_SAMPLE_BASE64 } from "@/components/keyboard/thock-sample";
+import { ROW_UNITS } from "./layout.ts";
+import type { KeyDef } from "./layout.ts";
+import { THOCK_SAMPLE_BASE64 } from "./thock-sample.ts";
 
 type SoundCategory = "normal" | "spacebar" | "modifier";
 
@@ -100,22 +100,23 @@ async function createEngine(): Promise<ThockEngine | null> {
   wet.connect(convolver);
   convolver.connect(compressor);
 
-  let buffer: AudioBuffer;
-  try {
-    buffer = await ctx.decodeAudioData(decodeBase64(THOCK_SAMPLE_BASE64));
-  } catch (error) {
-    // decodeAudioData rejects with a DOMException (e.g. EncodingError) when the browser can't decode Ogg Vorbis.
-    if (!(error instanceof DOMException)) throw error;
-    audioContext = null;
-    void ctx.close();
-    return disable(`could not decode the key sample (${error.message})`);
-  }
-
+  const buffer = await ctx.decodeAudioData(decodeBase64(THOCK_SAMPLE_BASE64));
   return { ctx, dry, wet, buffer, supportsPanning: typeof ctx.createStereoPanner === "function" };
 }
 
+function describeError(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+}
+
 function getEngine(): Promise<ThockEngine | null> {
-  enginePromise ??= createEngine();
+  // Sound is optional, so any setup failure turns it off for good: the AudioContext constructor throwing,
+  // a sample the browser can't decode (EncodingError), or old Safari rejecting decodeAudioData with null.
+  // Keeping a rejected promise here instead would rethrow on every key press.
+  enginePromise ??= createEngine().catch((error: unknown) => {
+    void audioContext?.close();
+    audioContext = null;
+    return disable(`Web Audio setup failed (${describeError(error)})`);
+  });
   return enginePromise;
 }
 

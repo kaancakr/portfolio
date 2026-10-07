@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { INITIAL_TYPING, advanceTyping, keyForTypedLetter, isNavigationKeystroke } from "./typing.ts";
+import { INITIAL_TYPING, advanceTyping, keyForTypedLetter, isNavigationKeystroke, typedLetter } from "./typing.ts";
 import type { KeystrokeInfo, TypingResult } from "./typing.ts";
 
 const typeText = (text: string, start = INITIAL_TYPING) => {
@@ -29,6 +29,21 @@ test("opens_section_and_resets_buffer_when_word_completes", () => {
 test("opens_after_leading_noise", () => assert.equal(typeText("zzexperience").open, "experience"));
 
 test("is_case_insensitive", () => assert.equal(typeText("PROJECTS").open, "projects"));
+
+// A Turkish layout types "İ" for Shift/CapsLock+i and has a separate dotless "ı" key.
+test("opens_word_typed_in_caps_on_a_turkish_layout", () => assert.equal(typeText("EXPERİENCE").open, "experience"));
+
+test("turkish_dotless_i_counts_as_i", () => assert.equal(typeText("experıence").open, "experience"));
+
+test("typed_letter_lowercases_ascii_letters", () => assert.equal(typedLetter("A"), "a"));
+
+test("typed_letter_folds_turkish_i_variants_to_i", () => {
+  for (const key of ["İ", "ı"]) assert.equal(typedLetter(key), "i", key);
+});
+
+test("typed_letter_is_null_for_other_keys", () => {
+  for (const key of [" ", "1", "ç", "Enter", "Shift"]) assert.equal(typedLetter(key), null, key);
+});
 
 test("clears_match_when_letter_breaks_every_prefix", () => {
   const r = typeText("exz");

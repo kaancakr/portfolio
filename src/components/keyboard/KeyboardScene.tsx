@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
-import { CAMERA_FOV, KEYBOARD_EXTENT, fitCameraDistance } from "@/components/keyboard/camera";
+import {
+  CAMERA_ELEVATION_DEG,
+  CAMERA_FOV,
+  CAMERA_LOOK_AT,
+  CAMERA_PARALLAX,
+  KEYBOARD_EXTENT,
+  PANEL_ELEVATION_DEG,
+  fitCameraDistance,
+} from "@/components/keyboard/camera";
 import { KeyboardModel } from "@/components/keyboard/KeyboardModel";
 import type { KeyboardModelProps } from "@/components/keyboard/KeyboardModel";
 
@@ -13,13 +21,12 @@ export interface KeyboardSceneProps extends KeyboardModelProps {
   onContextLost(): void;
 }
 
-const LOOK_AT = new THREE.Vector3(0, 0, 0.3);
-const ELEVATION = THREE.MathUtils.degToRad(52);
-const PANEL_ELEVATION = THREE.MathUtils.degToRad(62);
+const LOOK_AT = new THREE.Vector3(CAMERA_LOOK_AT.x, CAMERA_LOOK_AT.y, CAMERA_LOOK_AT.z);
+const ELEVATION = THREE.MathUtils.degToRad(CAMERA_ELEVATION_DEG);
+const PANEL_ELEVATION = THREE.MathUtils.degToRad(PANEL_ELEVATION_DEG);
 const INTRO_ELEVATION = THREE.MathUtils.degToRad(70);
 const PANEL_DISTANCE_FACTOR = 1.18;
 const INTRO_DISTANCE_FACTOR = 1.5;
-const PARALLAX = { x: 0.8, y: 0.4 };
 const CAMERA_DAMPING = 3;
 
 const AMBIENT_INTENSITY = 0.45;
@@ -29,23 +36,37 @@ const PANEL_LIGHT_FACTOR = 0.4;
 function CameraRig({ panelOpen, reducedMotion }: { panelOpen: boolean; reducedMotion: boolean }) {
   const camera = useThree((state) => state.camera);
   const size = useThree((state) => state.size);
+  const invalidate = useThree((state) => state.invalidate);
   const finePointer = useMemo(() => window.matchMedia("(pointer: fine)").matches, []);
   const rig = useRef<{ distance: number; elevation: number; offsetX: number; offsetY: number } | null>(null);
+  // The fit is a small numeric search, so run it per canvas size rather than per frame.
+  const fitted = useMemo(() => {
+    if (size.width === 0 || size.height === 0) return null;
+    const aspect = size.width / size.height;
+    return {
+      resting: fitCameraDistance({ aspect, fovDeg: CAMERA_FOV, elevationDeg: CAMERA_ELEVATION_DEG, ...KEYBOARD_EXTENT }),
+      panel: fitCameraDistance({ aspect, fovDeg: CAMERA_FOV, elevationDeg: PANEL_ELEVATION_DEG, ...KEYBOARD_EXTENT }),
+    };
+  }, [size.width, size.height]);
+
+  // With on-demand frames, nothing else would render the camera and light change when a panel opens or closes.
+  useEffect(() => {
+    invalidate();
+  }, [panelOpen, invalidate]);
 
   useFrame((state, delta) => {
-    if (size.width === 0 || size.height === 0) return;
-    const fitted = fitCameraDistance({ aspect: size.width / size.height, fovDeg: CAMERA_FOV, ...KEYBOARD_EXTENT });
+    if (!fitted) return;
     const target = {
-      distance: fitted * (panelOpen ? PANEL_DISTANCE_FACTOR : 1),
+      distance: panelOpen ? fitted.panel * PANEL_DISTANCE_FACTOR : fitted.resting,
       elevation: panelOpen ? PANEL_ELEVATION : ELEVATION,
-      offsetX: finePointer && !reducedMotion ? state.pointer.x * PARALLAX.x : 0,
-      offsetY: finePointer && !reducedMotion ? state.pointer.y * PARALLAX.y : 0,
+      offsetX: finePointer && !reducedMotion ? state.pointer.x * CAMERA_PARALLAX.x : 0,
+      offsetY: finePointer && !reducedMotion ? state.pointer.y * CAMERA_PARALLAX.y : 0,
     };
 
     if (!rig.current) {
       rig.current = reducedMotion
         ? { ...target }
-        : { distance: fitted * INTRO_DISTANCE_FACTOR, elevation: INTRO_ELEVATION, offsetX: 0, offsetY: 0 };
+        : { distance: fitted.resting * INTRO_DISTANCE_FACTOR, elevation: INTRO_ELEVATION, offsetX: 0, offsetY: 0 };
     }
     const current = rig.current;
     if (reducedMotion) {
@@ -115,6 +136,20 @@ function ContextLossWatcher({ onContextLost }: { onContextLost(): void }) {
   return null;
 }
 
+/**
+ * The stage turns inert under an open panel, so the canvas never sees the pointer leave a hovered key and the
+ * pointer cursor would stick over the panel. End the hover the way a real pointerleave would.
+ */
+function HoverReset({ panelOpen }: { panelOpen: boolean }) {
+  const events = useThree((state) => state.events);
+
+  useEffect(() => {
+    if (panelOpen) events.handlers?.onPointerLeave(new PointerEvent("pointerleave"));
+  }, [panelOpen, events]);
+
+  return null;
+}
+
 export default function KeyboardScene({ panelOpen, paused, onContextLost, ...modelProps }: KeyboardSceneProps) {
   return (
     <div className="keyboard-canvas" aria-hidden="true">
@@ -123,7 +158,8 @@ export default function KeyboardScene({ panelOpen, paused, onContextLost, ...mod
         shadows="percentage"
         gl={{ antialias: true, alpha: true }}
         camera={{ fov: CAMERA_FOV, near: 0.1, far: 100 }}
-        frameloop={paused ? "demand" : "always"}
+        // Nothing moves on its own under reduced motion, so render only when something changes.
+        frameloop={paused || modelProps.reducedMotion ? "demand" : "always"}
       >
         <Lights panelOpen={panelOpen} reducedMotion={modelProps.reducedMotion} />
         <CameraRig panelOpen={panelOpen} reducedMotion={modelProps.reducedMotion} />
@@ -133,6 +169,7 @@ export default function KeyboardScene({ panelOpen, paused, onContextLost, ...mod
           <shadowMaterial opacity={0.35} />
         </mesh>
         <ContextLossWatcher onContextLost={onContextLost} />
+        <HoverReset panelOpen={panelOpen} />
       </Canvas>
     </div>
   );
