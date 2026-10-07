@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { createPortal } from "react-dom";
 import dynamic from "next/dynamic";
 import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "framer-motion";
 import { FiVolume2, FiVolumeX } from "react-icons/fi";
@@ -20,9 +21,11 @@ import type { TypingMatch, TypingState } from "@/components/keyboard/typing";
 import { performAction } from "@/components/keyboard/actions";
 import { primeSound, setSoundMuted } from "@/components/keyboard/sound";
 import { SectionPanel } from "@/components/SectionPanel";
+import { Desktop, IntroHeading } from "@/components/Desktop";
 import { FlatKeyboard } from "@/components/keyboard/FlatKeyboard";
 import { KeyboardBoundary } from "@/components/keyboard/KeyboardBoundary";
 import { isWebGLAvailable } from "@/components/keyboard/webgl";
+import type { CameraFocus } from "@/components/keyboard/KeyboardScene";
 
 const KeyboardScene = dynamic(() => import("@/components/keyboard/KeyboardScene"), {
   ssr: false,
@@ -30,6 +33,9 @@ const KeyboardScene = dynamic(() => import("@/components/keyboard/KeyboardScene"
 });
 
 const IDLE_HINT = "Hover a word · press to open · or just type it";
+const WINDOW_OPEN_HINT = "Press another word to switch · Esc to close";
+// Below this, the screen is too small to read from, so sections open in the bottom panel instead.
+const MONITOR_QUERY = "(min-width: 900px) and (orientation: landscape)";
 const NO_PRESSES: PressSignal = { nonce: 0, presses: [] };
 const RIPPLE_STEP_MS = 35;
 const OPEN_AFTER_RIPPLE_MS = 120;
@@ -41,8 +47,8 @@ interface PanelHistoryState {
 const ACTION_IDS = Object.keys(ACTIONS) as ActionId[];
 const ACTION_SUFFIX: Record<ActionId, string> = { cv: " ↓", github: " ↗", mail: "" };
 
-function hintFor(highlight: HighlightTarget | null): string {
-  if (!highlight) return IDLE_HINT;
+function hintFor(highlight: HighlightTarget | null, windowOpen: boolean): string {
+  if (!highlight) return windowOpen ? WINDOW_OPEN_HINT : IDLE_HINT;
   const label =
     highlight.kind === "section"
       ? SECTIONS.find((section) => section.id === highlight.id)!.label
@@ -59,6 +65,8 @@ function wordFor(id: SectionId): string {
 }
 
 type KeyboardMode = "checking" | "3d" | "flat";
+/** Where an open section shows: in a window on the monitor's screen, or in the bottom panel. */
+type Presenter = "monitor" | "panel";
 
 /** Fades with the panel; while fading out it lets clicks through to the keyboard instead of swallowing them. */
 function PanelBackdrop({ reducedMotion, onClose }: { reducedMotion: boolean; onClose(): void }) {
@@ -86,6 +94,8 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
   const [panelSettled, setPanelSettled] = useState(false);
   const [keyboardMode, setKeyboardMode] = useState<KeyboardMode>("checking");
   const [typedMatch, setTypedMatch] = useState<TypingMatch | null>(null);
+  const [wideScreen, setWideScreen] = useState(false);
+  const [screenElement, setScreenElement] = useState<HTMLDivElement | null>(null);
   const pendingOpenRef = useRef<number | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const typingRef = useRef<TypingState>(INITIAL_TYPING);
@@ -93,6 +103,10 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
   // Panel entries keep their marker across a reload, but going back from one then leaves this document
   // (a full reload and intro replay), so only go back over entries pushed since this page loaded.
   const pushedPanelEntryRef = useRef(false);
+
+  const presenter: Presenter = keyboardMode === "3d" && wideScreen ? "monitor" : "panel";
+  // Only the panel covers the page; a window on the monitor leaves the keyboard usable.
+  const panelOpen = presenter === "panel" && activeSection !== null;
 
   const handleHoverChange = useCallback((target: HighlightTarget | null) => setHighlight(target), []);
   const clearHighlight = useCallback(() => setHighlight(null), []);
@@ -116,8 +130,12 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
 
   const openSection = useCallback(
     (id: SectionId, { ripple = true }: { ripple?: boolean } = {}) => {
-      if (activeSection !== null || pendingOpenRef.current !== null) return;
-      returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (panelOpen || activeSection === id || pendingOpenRef.current !== null) return;
+      // Switching windows keeps the focus target from before the first one opened.
+      const switching = activeSection !== null;
+      if (!switching) {
+        returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      }
       setHighlight({ kind: "section", id });
       if (ripple) emitPress(rippleFor(id));
       const delay = reducedMotion ? 0 : wordFor(id).length * RIPPLE_STEP_MS + OPEN_AFTER_RIPPLE_MS;
@@ -126,12 +144,17 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
         setPanelSettled(false);
         setActiveSection(id);
         setHighlight(null);
-        // Next's patched pushState writes its router state into the object it is given, so each push needs a fresh one.
-        window.history.pushState({ portfolioPanel: true } satisfies PanelHistoryState, "", sectionHash(id));
-        pushedPanelEntryRef.current = true;
+        // Next's patched history methods write their router state into the object they are given, so each call needs a fresh one.
+        if (switching) {
+          // Replacing keeps one entry per open window, so Back still closes it in one step.
+          window.history.replaceState({ portfolioPanel: true } satisfies PanelHistoryState, "", sectionHash(id));
+        } else {
+          window.history.pushState({ portfolioPanel: true } satisfies PanelHistoryState, "", sectionHash(id));
+          pushedPanelEntryRef.current = true;
+        }
       }, delay);
     },
-    [activeSection, emitPress, rippleFor, reducedMotion],
+    [activeSection, panelOpen, emitPress, rippleFor, reducedMotion],
   );
 
   const closeSection = useCallback(() => {
@@ -155,11 +178,11 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
   const handleKeyPointerDown = useCallback(
     (key: KeyDef) => {
       primeSound();
-      if (activeSection !== null || pendingOpenRef.current !== null) return;
+      if (panelOpen || pendingOpenRef.current !== null) return;
       if (key.kind === "word" && key.section) emitPress(rippleFor(key.section));
       else emitPress([{ keyId: key.id, delayMs: 0 }]);
     },
-    [activeSection, emitPress, rippleFor],
+    [panelOpen, emitPress, rippleFor],
   );
 
   const handleKeyClick = useCallback(
@@ -172,6 +195,21 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
 
   useEffect(() => {
     setKeyboardMode(isWebGLAvailable() ? "3d" : "flat");
+  }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia(MONITOR_QUERY);
+    const update = () => setWideScreen(query.matches);
+    update();
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  // The desktop renders into this element through a portal; the 3D scene projects it onto the monitor.
+  useEffect(() => {
+    const element = document.createElement("div");
+    element.className = "screen-root";
+    setScreenElement(element);
   }, []);
 
   // Safari only unlocks audio inside a user gesture. Prime on every click and keydown, before any handler runs,
@@ -190,6 +228,8 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
     console.warn("WebGL context lost; switching to the 2D keyboard.");
     setKeyboardMode("flat");
   }, []);
+
+  const handleSceneFailed = useCallback(() => setKeyboardMode("flat"), []);
 
   // Open the panel named in the URL on load, and follow Back/Forward afterwards.
   useEffect(() => {
@@ -234,7 +274,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
         resetTyping();
         return;
       }
-      if (activeSection !== null || pendingOpenRef.current !== null) return;
+      if (panelOpen || pendingOpenRef.current !== null) return;
 
       // Enter opens whatever the hint names; a focused link or button handles its own Enter.
       if (event.key === "Enter" && highlight && !target?.closest("a, button")) {
@@ -267,7 +307,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSection, closeSection, emitPress, highlight, openSection, resetTyping]);
+  }, [panelOpen, closeSection, emitPress, highlight, openSection, resetTyping]);
 
   const toggleMuted = () => {
     const next = !muted;
@@ -275,7 +315,9 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
     setMuted(next);
   };
 
-  const panelOpen = activeSection !== null;
+  const monitorShowsWindow = presenter === "monitor" && activeSection !== null;
+  const cameraFocus: CameraFocus = panelOpen ? "panel" : monitorShowsWindow ? "screen" : "desk";
+  const hint = <p className="stage-hint">{hintFor(highlight, monitorShowsWindow)}</p>;
   const flatKeyboard = (
     <FlatKeyboard
       highlight={highlight}
@@ -287,7 +329,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
 
   return (
     <>
-      <main className="stage" inert={panelOpen}>
+      <main className={`stage${presenter === "monitor" ? " stage-monitor" : ""}`} inert={panelOpen}>
         <button
           type="button"
           className="mute-toggle"
@@ -297,23 +339,23 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
         >
           {muted ? <FiVolumeX aria-hidden="true" /> : <FiVolume2 aria-hidden="true" />}
         </button>
-        <header className="stage-intro">
-          <div className="eyebrow">Software Engineer · Ankara, Türkiye</div>
-          <h1 className="stage-title">
-            Hi, I&apos;m <span>Kaan.</span>
-          </h1>
-          <p className="stage-hint">{hintFor(highlight)}</p>
-        </header>
+        {presenter === "panel" && (
+          <header className="stage-intro">
+            <IntroHeading />
+            {hint}
+          </header>
+        )}
         {keyboardMode === "checking" && <div className="keyboard-canvas" />}
         {keyboardMode === "3d" && (
-          <KeyboardBoundary fallback={flatKeyboard}>
+          <KeyboardBoundary fallback={flatKeyboard} onFail={handleSceneFailed}>
             <KeyboardScene
               highlight={highlight}
               typedMatch={typedMatch}
               pressSignal={pressSignal}
               reducedMotion={reducedMotion}
-              panelOpen={panelOpen}
+              focus={cameraFocus}
               paused={panelOpen && panelSettled}
+              screenElement={screenElement}
               onHoverChange={handleHoverChange}
               onKeyPointerDown={handleKeyPointerDown}
               onKeyClick={handleKeyClick}
@@ -322,6 +364,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
           </KeyboardBoundary>
         )}
         {keyboardMode === "flat" && flatKeyboard}
+        {presenter === "monitor" && hint}
         <nav aria-label="Sections" className="keyboard-nav">
           <div className="keyboard-nav-group">
             {SECTIONS.map((section) => (
@@ -365,19 +408,35 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
       <AnimatePresence>
         {panelOpen && <PanelBackdrop key="panel-backdrop" reducedMotion={reducedMotion} onClose={closeSection} />}
       </AnimatePresence>
-      {SECTIONS.map((section) => (
-        <SectionPanel
-          key={section.id}
-          id={section.id}
-          title={section.label}
-          open={activeSection === section.id}
-          reducedMotion={reducedMotion}
-          onClose={closeSection}
-          onSettledChange={setPanelSettled}
-        >
-          {sections[section.id]}
-        </SectionPanel>
-      ))}
+      {keyboardMode === "3d" &&
+        screenElement &&
+        createPortal(
+          <Desktop
+            sections={sections}
+            activeSection={activeSection}
+            interactive={presenter === "monitor"}
+            reducedMotion={reducedMotion}
+            onOpenSection={openSection}
+            onCloseSection={closeSection}
+            onHoverChange={handleHoverChange}
+          />,
+          screenElement,
+        )}
+      {/* The monitor shows sections in its own window; the panels would duplicate them, ids included. */}
+      {presenter === "panel" &&
+        SECTIONS.map((section) => (
+          <SectionPanel
+            key={section.id}
+            id={section.id}
+            title={section.label}
+            open={activeSection === section.id}
+            reducedMotion={reducedMotion}
+            onClose={closeSection}
+            onSettledChange={setPanelSettled}
+          >
+            {sections[section.id]}
+          </SectionPanel>
+        ))}
     </>
   );
 }

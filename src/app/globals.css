@@ -41,6 +41,10 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .stage-hint { min-height: 1.6em; margin: 0; color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: 12px; letter-spacing: .04em; }
 .keyboard-canvas { position: relative; min-height: 0; -webkit-user-select: none; user-select: none; }
 .keyboard-canvas canvas { display: block; }
+.keyboard-gl { position: absolute; inset: 0; }
+.screen-layer { position: absolute; inset: 0; overflow: clip; pointer-events: none; }
+.stage-monitor { grid-template-rows: minmax(0, 1fr) auto auto; }
+.stage-monitor .stage-hint { padding: 0 24px 6px; text-align: center; }
 .flat-stage { display: grid; place-items: center; padding: 12px 16px; }
 .flat-keyboard { display: grid; gap: 8px; width: min(760px, 100%); padding: clamp(10px, 2vw, 18px); border-radius: 14px; background: linear-gradient(178deg, #ad7440 0%, #895128 55%, #63391a 100%); box-shadow: 0 24px 60px rgba(0, 0, 0, .5), inset 0 1px 0 rgba(255, 222, 185, .25); }
 .flat-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px; border-radius: 8px; background: #0e0c08; }
@@ -67,6 +71,35 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .panel-close svg { width: 18px; height: 18px; }
 .panel-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .panel .section { padding: 8px 0 56px; border-top: 0; }
+
+.screen-root { overflow: hidden; border-radius: 3px; background: #050707; }
+.desktop { position: relative; display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: radial-gradient(ellipse 65% 55% at 78% 88%, rgba(197,243,107,.15), transparent 62%), radial-gradient(ellipse 55% 50% at 12% 0%, rgba(126,168,255,.09), transparent 60%), linear-gradient(160deg, #101716 0%, #080b0b 58%, #050707 100%); }
+/* The screen powers on once the keyboard has landed; mid-intro the tilted keyboard would sit under it. */
+.desktop-boot { animation: desktop-boot .5s ease-out 1.1s both; }
+@keyframes desktop-boot { from { opacity: 0; } to { opacity: 1; } }
+.desktop-menubar { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; height: 34px; padding: 0 18px; border-bottom: 1px solid var(--line); background: rgba(8,11,11,.6); color: #b8c0ba; font-family: var(--font-geist-mono), monospace; font-size: 12px; letter-spacing: .04em; }
+.desktop-brand { color: var(--accent); font-weight: 600; }
+.desktop-menubar-items { display: flex; align-items: center; gap: 22px; }
+.desktop-menubar-items a { display: inline-flex; align-items: center; gap: 6px; transition: color .2s; }
+.desktop-menubar-items a:hover, .desktop-menubar-items a:focus-visible { color: var(--accent); }
+.desktop-menubar-items time { color: var(--foreground); }
+.desktop-area { position: relative; flex: 1; min-height: 0; }
+.desktop-icons { position: absolute; top: 26px; left: 22px; display: grid; gap: 14px; }
+.desktop-icon { display: grid; justify-items: center; gap: 8px; width: 96px; padding: 10px 4px 8px; border: 1px solid transparent; border-radius: 12px; background: none; color: #d6ddd6; font: 13px/1.2 Arial, Helvetica, sans-serif; cursor: pointer; transition: background .2s, border-color .2s; }
+.desktop-icon:hover, .desktop-icon:focus-visible, .desktop-icon.is-active { border-color: rgba(197,243,107,.28); background: rgba(197,243,107,.08); }
+.desktop-icon-glyph { display: grid; width: 54px; height: 54px; place-items: center; border: 1px solid rgba(226,236,225,.14); border-radius: 14px; background: linear-gradient(160deg, #1c2523, #0f1514); box-shadow: 0 10px 24px rgba(0,0,0,.35); color: var(--accent); }
+.desktop-icon-glyph svg { width: 24px; height: 24px; }
+.desktop-hero { position: absolute; right: 7%; bottom: 13%; text-align: right; }
+.desktop-hero .stage-title { margin: 14px 0 0; font-size: 88px; }
+.desktop-window { position: absolute; top: 18px; right: 26px; bottom: 22px; left: 144px; display: flex; flex-direction: column; overflow: hidden; border: 1px solid rgba(226,236,225,.16); border-radius: 12px; background: var(--surface); box-shadow: 0 30px 80px rgba(0,0,0,.55); }
+.desktop-window-bar { position: relative; display: flex; flex: 0 0 auto; align-items: center; gap: 8px; height: 40px; padding: 0 16px; border-bottom: 1px solid var(--line); background: var(--surface-raised); }
+.window-dot { width: 13px; height: 13px; border-radius: 50%; background: #39413d; }
+.window-close { display: grid; place-items: center; padding: 0; border: 0; background: #e2675d; color: transparent; cursor: pointer; }
+.window-close svg { width: 9px; height: 9px; stroke-width: 3.5; }
+.window-close:hover, .window-close:focus-visible { color: #4d130e; }
+.desktop-window-title { position: absolute; left: 50%; transform: translateX(-50%); color: var(--muted); font-family: var(--font-geist-mono), monospace; font-size: 12px; letter-spacing: .04em; }
+.desktop-window-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; outline: none; -webkit-user-select: text; user-select: text; }
+.desktop-window .section { padding: 34px 0 48px; border-top: 0; }
 
 .button-primary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid var(--accent); border-radius: 8px; padding: 11px 16px; background: var(--accent); color: #12170e; font-size: 13px; font-weight: 650; transition: transform .2s, background .2s; }
 .button-primary:hover { transform: translateY(-2px); background: #d2fa87; }
@@ -224,5 +257,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .desktop-boot { animation: none; }
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; }
 }
