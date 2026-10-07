@@ -1,5 +1,6 @@
 import Image from "next/image";
 import { FiArrowUpRight } from "react-icons/fi";
+import { withBasePath } from "@/lib/base-path";
 
 type ProjectVisual = "abu-app" | "abu-assistant" | "optima-alpr" | "apiguard" | "openapi" | "extension";
 
@@ -66,7 +67,7 @@ function ProjectArtwork({ visual }: { visual: ProjectVisual }) {
   if (visual === "abu-app") {
     return (
       <div className="project-visual project-visual-app">
-        <Image src="/projects/abu-app.png" alt="ABU App mobile screens showing the student schedule" fill sizes="(max-width: 760px) 100vw, 33vw" />
+        <Image src={withBasePath("/projects/abu-app.png")}alt="ABU App mobile screens showing the student schedule" fill sizes="(max-width: 760px) 100vw, 33vw" />
       </div>
     );
   }
@@ -75,7 +76,7 @@ function ProjectArtwork({ visual }: { visual: ProjectVisual }) {
     return (
       <div className="project-visual chatbot-visual" aria-label="Illustration of the ABU Assistant chat interface">
         <div className="chat-window">
-          <div className="chat-topbar"><span className="chat-brand"><Image src="/projects/abu-assistant.png" alt="" width={27} height={27} /> <span>ABU Assistant</span></span><span className="chat-menu">•••</span></div>
+          <div className="chat-topbar"><span className="chat-brand"><Image src={withBasePath("/projects/abu-assistant.png")}alt="" width={27} height={27} /> <span>ABU Assistant</span></span><span className="chat-menu">•••</span></div>
           <div className="chat-messages">
             <div className="chat-bubble chat-bubble-user">When does course registration open?</div>
             <div className="chat-bubble chat-bubble-bot"><span className="chat-bot-mark">ABU</span><span>I can help you find the registration dates and next steps.</span></div>

@@ -1,3 +1,5 @@
+import { withBasePath } from "../../lib/base-path.ts";
+
 export type SectionId = "about" | "experience" | "projects" | "contact";
 export type ActionId = "cv" | "github" | "mail";
 export type KeyKind = "word" | "action" | "modifier" | "blank";
@@ -23,7 +25,7 @@ export const SECTIONS: readonly { id: SectionId; word: string; label: string }[]
 ];
 
 export const ACTIONS: Record<ActionId, { label: string; href: string; download?: true; external?: true }> = {
-  cv: { label: "CV", href: "/Eren_Kaan_Cakir_Resume.pdf", download: true },
+  cv: { label: "CV", href: withBasePath("/Eren_Kaan_Cakir_Resume.pdf"), download: true },
   github: { label: "GitHub", href: "https://github.com/kaancakr", external: true },
   mail: { label: "Mail", href: "mailto:erenkaancakr@gmail.com" },
 };
