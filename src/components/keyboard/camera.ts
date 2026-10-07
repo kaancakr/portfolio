@@ -1,3 +1,5 @@
+import { SCREEN_CENTER, SCREEN_SIZE, SCREEN_TILT_DEG, monitorCorners, screenCorners } from "./monitor.ts";
+
 export interface KeyboardExtent {
   width: number;
   depth: number;
@@ -10,6 +12,18 @@ export interface FitOptions extends KeyboardExtent {
   fovDeg: number;
   /** Camera elevation above the keyboard plane, in degrees. */
   elevationDeg: number;
+}
+
+export interface FitCornersOptions {
+  corners: Vec3[];
+  lookAt: Vec3;
+  aspect: number;
+  fovDeg: number;
+  elevationDeg: number;
+  /** Largest pointer-parallax shift the camera can take, in world units. */
+  parallax: { x: number; y: number };
+  /** Largest |x| and |y| any corner may reach in normalized device coordinates; 1 is the frame edge. */
+  limit: number;
 }
 
 export interface Vec3 {
@@ -25,14 +39,33 @@ export interface CameraPose {
   offsetY: number;
 }
 
+/** Where the camera rig aims, and from how far and how high. */
+export interface ViewPose {
+  lookAt: Vec3;
+  elevationDeg: number;
+  distance: number;
+}
+
 /** Size of the keyboard case in world units, plus breathing room around it. */
 export const KEYBOARD_EXTENT: KeyboardExtent = { width: 15.9, depth: 5.9, margin: 0.6 };
 export const CAMERA_FOV = 32;
 export const CAMERA_LOOK_AT: Vec3 = { x: 0, y: 0, z: 0.3 };
-export const CAMERA_ELEVATION_DEG = 52;
 export const PANEL_ELEVATION_DEG = 62;
 /** Largest camera shift the pointer parallax applies, in world units. */
 export const CAMERA_PARALLAX = { x: 0.8, y: 0.4 };
+/** Resting view: the monitor and the keyboard together, from above the desk, centered top to bottom. */
+export const DESK_LOOK_AT: Vec3 = { x: 0, y: 3.8, z: -3 };
+export const DESK_ELEVATION_DEG = 28;
+/** Largest share of the frame, per axis in NDC, the desk covers, leaving a little room at the edges. */
+export const DESK_FILL = 0.94;
+/** Largest share of the frame, per axis in NDC, the screen covers in the reading view. */
+export const SCREEN_FILL = 0.94;
+/** The desktop DOM never lays out narrower than this, however small the screen is drawn. */
+export const MIN_SCREEN_PX = 960;
+export const MAX_SCREEN_PX = 1600;
+// The reading view aims this far below the screen center, so the keyboard's back rows peek in under it.
+const SCREEN_LOOK_DROP = 0.8;
+const NO_PARALLAX = { x: 0, y: 0 };
 // Vertical span the keyboard can occupy: case bottom up to lifted, floating key tops.
 const CASE_BOTTOM_Y = -0.5;
 const KEY_TOP_Y = 0.6;
@@ -50,28 +83,28 @@ export function visibleWidthAt(distance: number, fovDeg: number, aspect: number)
 }
 
 /**
- * Smallest camera distance at which every corner of the keyboard stays on screen, for every
- * pointer-parallax extreme. The camera looks down at the keyboard, so the near edge appears
- * wider than the look-at plane; corners are projected instead of assuming a flat rectangle.
+ * Smallest camera distance at which every corner stays within `limit` of the frame center, for every
+ * pointer-parallax extreme. The camera looks down at the scene, so near edges appear wider than far
+ * ones; corners are projected instead of assuming a flat rectangle.
  */
-export function fitCameraDistance({ aspect, fovDeg, elevationDeg, ...extent }: FitOptions): number {
+export function fitCorners({ corners, lookAt, aspect, fovDeg, elevationDeg, parallax, limit }: FitCornersOptions): number {
   assertPositive("aspect", aspect);
   assertPositive("fovDeg", fovDeg);
   assertPositive("elevationDeg", elevationDeg);
-  const corners = caseCorners(extent);
+  assertPositive("limit", limit);
   const offsets = [
     [0, 0],
-    [CAMERA_PARALLAX.x, CAMERA_PARALLAX.y],
-    [-CAMERA_PARALLAX.x, -CAMERA_PARALLAX.y],
-    [CAMERA_PARALLAX.x, -CAMERA_PARALLAX.y],
-    [-CAMERA_PARALLAX.x, CAMERA_PARALLAX.y],
+    [parallax.x, parallax.y],
+    [-parallax.x, -parallax.y],
+    [parallax.x, -parallax.y],
+    [-parallax.x, parallax.y],
   ];
   const fits = (distance: number) =>
     offsets.every(([offsetX, offsetY]) => {
-      const eye = cameraPosition({ distance, elevationDeg, offsetX, offsetY });
+      const eye = cameraPosition({ distance, elevationDeg, offsetX, offsetY }, lookAt);
       return corners.every((corner) => {
-        const p = projectToNdc(corner, eye, fovDeg, aspect);
-        return Math.abs(p.x) <= 1 && Math.abs(p.y) <= 1;
+        const p = projectToNdc(corner, eye, fovDeg, aspect, lookAt);
+        return Math.abs(p.x) <= limit && Math.abs(p.y) <= limit;
       });
     });
 
@@ -80,7 +113,7 @@ export function fitCameraDistance({ aspect, fovDeg, elevationDeg, ...extent }: F
   let far = 16;
   while (!fits(far)) {
     far *= 2;
-    if (far > 1e5) throw new RangeError(`No camera distance fits the keyboard at aspect ${aspect}`);
+    if (far > 1e5) throw new RangeError(`No camera distance fits the corners at aspect ${aspect}`);
   }
   for (let i = 0; i < 40; i++) {
     const middle = (near + far) / 2;
@@ -90,13 +123,74 @@ export function fitCameraDistance({ aspect, fovDeg, elevationDeg, ...extent }: F
   return far;
 }
 
-/** Camera position for a pose, matching the scene's camera rig. */
-export function cameraPosition({ distance, elevationDeg, offsetX, offsetY }: CameraPose): Vec3 {
+/** Smallest camera distance at which every corner of the keyboard alone stays on screen. */
+export function fitCameraDistance({ aspect, fovDeg, elevationDeg, ...extent }: FitOptions): number {
+  return fitCorners({
+    corners: caseCorners(extent),
+    lookAt: CAMERA_LOOK_AT,
+    aspect,
+    fovDeg,
+    elevationDeg,
+    parallax: CAMERA_PARALLAX,
+    limit: 1,
+  });
+}
+
+/** Resting view that keeps the keyboard and the whole monitor in frame. */
+export function deskPose(aspect: number): ViewPose {
+  const distance = fitCorners({
+    corners: [...caseCorners(), ...monitorCorners()],
+    lookAt: DESK_LOOK_AT,
+    aspect,
+    fovDeg: CAMERA_FOV,
+    elevationDeg: DESK_ELEVATION_DEG,
+    parallax: CAMERA_PARALLAX,
+    limit: DESK_FILL,
+  });
+  return { lookAt: DESK_LOOK_AT, elevationDeg: DESK_ELEVATION_DEG, distance };
+}
+
+/** Reading view: head-on to the leaning screen, as close as `SCREEN_FILL` allows. It takes no parallax. */
+export function screenPose(aspect: number): ViewPose {
+  const lookAt = { ...SCREEN_CENTER, y: SCREEN_CENTER.y - SCREEN_LOOK_DROP };
+  const distance = fitCorners({
+    corners: screenCorners(),
+    lookAt,
+    aspect,
+    fovDeg: CAMERA_FOV,
+    elevationDeg: SCREEN_TILT_DEG,
+    parallax: NO_PARALLAX,
+    limit: SCREEN_FILL,
+  });
+  return { lookAt, elevationDeg: SCREEN_TILT_DEG, distance };
+}
+
+/**
+ * CSS pixel size to lay the desktop out at for a canvas of this size: the screen's on-screen width in the
+ * reading view, so text there renders close to 1:1, kept within readable bounds.
+ */
+export function screenResolution(canvasWidth: number, canvasHeight: number): { width: number; height: number } {
+  assertPositive("canvasWidth", canvasWidth);
+  assertPositive("canvasHeight", canvasHeight);
+  const aspect = canvasWidth / canvasHeight;
+  const pose = screenPose(aspect);
+  const eye = cameraPosition({ distance: pose.distance, elevationDeg: pose.elevationDeg, offsetX: 0, offsetY: 0 }, pose.lookAt);
+  const xs = screenCorners().map((corner) => projectToNdc(corner, eye, CAMERA_FOV, aspect, pose.lookAt).x);
+  const drawnWidth = ((Math.max(...xs) - Math.min(...xs)) / 2) * canvasWidth;
+  const width = Math.round(Math.min(Math.max(drawnWidth, MIN_SCREEN_PX), MAX_SCREEN_PX));
+  return { width, height: Math.round((width * SCREEN_SIZE.height) / SCREEN_SIZE.width) };
+}
+
+/** Camera position for a pose around `lookAt`, matching the scene's camera rig. */
+export function cameraPosition(
+  { distance, elevationDeg, offsetX, offsetY }: CameraPose,
+  lookAt: Vec3 = CAMERA_LOOK_AT,
+): Vec3 {
   const elevation = toRadians(elevationDeg);
   return {
-    x: CAMERA_LOOK_AT.x + offsetX,
-    y: CAMERA_LOOK_AT.y + distance * Math.sin(elevation) + offsetY,
-    z: CAMERA_LOOK_AT.z + distance * Math.cos(elevation),
+    x: lookAt.x + offsetX,
+    y: lookAt.y + distance * Math.sin(elevation) + offsetY,
+    z: lookAt.z + distance * Math.cos(elevation),
   };
 }
 

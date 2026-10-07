@@ -5,6 +5,8 @@ import type { ReactNode } from "react";
 
 interface KeyboardBoundaryProps {
   fallback: ReactNode;
+  /** Lets the page stop relying on the 3D scene, e.g. for the monitor's screen. */
+  onFail(): void;
   children: ReactNode;
 }
 
@@ -23,6 +25,7 @@ export class KeyboardBoundary extends Component<KeyboardBoundaryProps, KeyboardB
   componentDidCatch() {
     // React already reports the caught error itself; this only records what the page did about it.
     console.warn("3D keyboard failed; showing the 2D keyboard instead.");
+    this.props.onFail();
   }
 
   render() {
