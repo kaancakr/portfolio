@@ -1,16 +1,16 @@
 "use client";
 
 import { memo, useEffect, useMemo, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 import type { KeyDef, KeyKind } from "@/components/keyboard/layout";
 import { playKeySound } from "@/components/keyboard/sound";
 
-export const CAP_HEIGHT = 0.42;
-export const CAP_DEPTH = 0.9;
-export const CAP_BASE_Y = 0.02;
+const CAP_HEIGHT = 0.42;
+const CAP_DEPTH = 0.9;
+const CAP_BASE_Y = 0.02;
 
 const CAP_GAP = 0.1;
 const LEGEND_INSET = 0.26;
@@ -52,7 +52,6 @@ function capGeometry(width: number): RoundedBoxGeometry {
   }
   return geometry;
 }
-
 
 function createLegendTexture(def: KeyDef): THREE.CanvasTexture {
   const canvas = document.createElement("canvas");
@@ -103,6 +102,7 @@ interface KeycapProps {
   onPointerOver(def: KeyDef): void;
   onPointerOut(def: KeyDef): void;
   onPointerDown(def: KeyDef): void;
+  onClick(def: KeyDef): void;
 }
 
 export const Keycap = memo(function Keycap({
@@ -115,16 +115,24 @@ export const Keycap = memo(function Keycap({
   onPointerOver,
   onPointerOut,
   onPointerDown,
+  onClick,
 }: KeycapProps) {
   const capRef = useRef<THREE.Group>(null);
   const glowRef = useRef<THREE.MeshBasicMaterial>(null);
   const motion = useRef({ lift: 0, introOffset: reducedMotion ? 0 : INTRO_DROP, introVelocity: 0, startedAt: -1 });
   // pendingDelay: a press waiting to be scheduled on the R3F clock; startAt/releaseAt: clock times.
   const pressMotion = useRef({ pendingDelay: -1, startAt: -1, releaseAt: -1, offset: 0, velocity: 0 });
+  // The frameloop runs on demand under reduced motion (and behind a settled panel), so changes must ask for a frame.
+  const invalidate = useThree((state) => state.invalidate);
 
   useEffect(() => {
     if (press) pressMotion.current.pendingDelay = press.delayMs / 1000;
-  }, [press]);
+    invalidate();
+  }, [press, invalidate]);
+
+  useEffect(() => {
+    invalidate();
+  }, [highlighted, invalidate]);
 
   // Per key (not shared) so each cap's lime tint can fade in and out on its own.
   const capMaterial = useMemo(
@@ -214,6 +222,10 @@ export const Keycap = memo(function Keycap({
         if (Math.abs(p.offset) < 5e-4 && Math.abs(p.velocity) < 1e-3) p.offset = 0;
       }
     }
+    // Keep frames coming until a press has played its sound and the cap is back at rest.
+    if (p.pendingDelay >= 0 || p.startAt >= 0 || (p.releaseAt >= 0 && now < p.releaseAt) || p.offset !== 0) {
+      state.invalidate();
+    }
 
     cap.position.y = m.introOffset + m.lift + p.offset;
   });
@@ -240,7 +252,13 @@ export const Keycap = memo(function Keycap({
           }}
           onPointerDown={(event: ThreeEvent<PointerEvent>) => {
             event.stopPropagation();
+            // Only a primary click activates a key, so other buttons get no press either.
+            if (event.button !== 0) return;
             onPointerDown(def);
+          }}
+          onClick={(event: ThreeEvent<MouseEvent>) => {
+            event.stopPropagation();
+            onClick(def);
           }}
         />
         {legend && (

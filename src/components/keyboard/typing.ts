@@ -37,6 +37,15 @@ function matchFor(buffer: string): TypingMatch | null {
   return entry ? { section: entry.id, length: buffer.length } : null;
 }
 
+/**
+ * The lowercase a–z letter a key types, or null for any other key. A Turkish layout types "İ"
+ * for Shift/CapsLock+i and has a dotless "ı" key; both count as "i".
+ */
+export function typedLetter(key: string): string | null {
+  if (key === "İ" || key === "ı") return "i";
+  return /^[a-z]$/i.test(key) ? key.toLowerCase() : null;
+}
+
 /** Longest suffix of `buffer` that starts some word; "" when none does. */
 function longestWordPrefixSuffix(buffer: string): string {
   for (let start = 0; start < buffer.length; start++) {
@@ -54,11 +63,12 @@ export function advanceTyping(state: TypingState, key: string): TypingResult {
     const buffer = state.buffer.slice(0, -1);
     return { state: { buffer }, match: matchFor(buffer), open: null };
   }
-  if (!/^[a-z]$/i.test(key)) {
+  const letter = typedLetter(key);
+  if (letter === null) {
     return { state: INITIAL_TYPING, match: null, open: null };
   }
 
-  const buffer = longestWordPrefixSuffix(state.buffer + key.toLowerCase());
+  const buffer = longestWordPrefixSuffix(state.buffer + letter);
   const completed = WORDS.find(({ word }) => word === buffer);
   if (completed) {
     return { state: INITIAL_TYPING, match: { section: completed.id, length: buffer.length }, open: completed.id };

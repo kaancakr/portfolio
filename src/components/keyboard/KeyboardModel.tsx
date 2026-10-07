@@ -23,7 +23,10 @@ export interface KeyboardModelProps {
   pressSignal: PressSignal;
   reducedMotion: boolean;
   onHoverChange(target: HighlightTarget | null): void;
+  /** Press feedback only: fires as soon as a key goes down. */
   onKeyPointerDown(key: KeyDef): void;
+  /** Activation: fires on release over the same key, which also counts as a user gesture on touch. */
+  onKeyClick(key: KeyDef): void;
 }
 
 const CASE_SIZE = { width: 15.9, height: 0.5, depth: 5.9 };
@@ -114,6 +117,7 @@ export function KeyboardModel({
   reducedMotion,
   onHoverChange,
   onKeyPointerDown,
+  onKeyClick,
 }: KeyboardModelProps) {
   const groupRef = useRef<THREE.Group>(null);
   const glowLightRef = useRef<THREE.PointLight>(null);
@@ -239,6 +243,7 @@ export function KeyboardModel({
           onPointerOver={handlePointerOver}
           onPointerOut={handlePointerOut}
           onPointerDown={onKeyPointerDown}
+          onClick={onKeyClick}
         />
       ))}
       <pointLight ref={glowLightRef} color="#c5f36b" distance={9} decay={2} intensity={0} />

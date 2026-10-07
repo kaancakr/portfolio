@@ -3,13 +3,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
-import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { AnimatePresence, motion, useIsPresent, useReducedMotion } from "framer-motion";
 import { FiVolume2, FiVolumeX } from "react-icons/fi";
 import { ACTIONS, SECTIONS, keysForSection } from "@/components/keyboard/layout";
 import type { ActionId, KeyDef, SectionId } from "@/components/keyboard/layout";
 import type { HighlightTarget, PressSignal } from "@/components/keyboard/KeyboardModel";
 import { parseSectionHash, sectionHash } from "@/components/keyboard/hash";
-import { INITIAL_TYPING, advanceTyping, isNavigationKeystroke, keyForTypedLetter } from "@/components/keyboard/typing";
+import {
+  INITIAL_TYPING,
+  advanceTyping,
+  isNavigationKeystroke,
+  keyForTypedLetter,
+  typedLetter,
+} from "@/components/keyboard/typing";
 import type { TypingMatch, TypingState } from "@/components/keyboard/typing";
 import { performAction } from "@/components/keyboard/actions";
 import { primeSound, setSoundMuted } from "@/components/keyboard/sound";
@@ -29,7 +35,9 @@ const RIPPLE_STEP_MS = 35;
 const OPEN_AFTER_RIPPLE_MS = 120;
 const TYPING_IDLE_RESET_MS = 2000;
 // Marks history entries this page pushed, so closing can go back instead of stacking entries.
-const PANEL_HISTORY_STATE = { portfolioPanel: true };
+interface PanelHistoryState {
+  portfolioPanel: true;
+}
 const ACTION_IDS = Object.keys(ACTIONS) as ActionId[];
 const ACTION_SUFFIX: Record<ActionId, string> = { cv: " ↓", github: " ↗", mail: "" };
 
@@ -52,6 +60,23 @@ function wordFor(id: SectionId): string {
 
 type KeyboardMode = "checking" | "3d" | "flat";
 
+/** Fades with the panel; while fading out it lets clicks through to the keyboard instead of swallowing them. */
+function PanelBackdrop({ reducedMotion, onClose }: { reducedMotion: boolean; onClose(): void }) {
+  const isPresent = useIsPresent();
+  return (
+    <motion.div
+      className="panel-backdrop"
+      aria-hidden="true"
+      style={{ pointerEvents: isPresent ? "auto" : "none" }}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      transition={{ duration: reducedMotion ? 0 : 0.25 }}
+      onClick={onClose}
+    />
+  );
+}
+
 export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode> }) {
   const reducedMotion = useReducedMotion() ?? false;
   const [highlight, setHighlight] = useState<HighlightTarget | null>(null);
@@ -65,6 +90,9 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const typingRef = useRef<TypingState>(INITIAL_TYPING);
   const typingIdleRef = useRef<number | null>(null);
+  // Panel entries keep their marker across a reload, but going back from one then leaves this document
+  // (a full reload and intro replay), so only go back over entries pushed since this page loaded.
+  const pushedPanelEntryRef = useRef(false);
 
   const handleHoverChange = useCallback((target: HighlightTarget | null) => setHighlight(target), []);
   const clearHighlight = useCallback(() => setHighlight(null), []);
@@ -98,7 +126,9 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
         setPanelSettled(false);
         setActiveSection(id);
         setHighlight(null);
-        window.history.pushState(PANEL_HISTORY_STATE, "", sectionHash(id));
+        // Next's patched pushState writes its router state into the object it is given, so each push needs a fresh one.
+        window.history.pushState({ portfolioPanel: true } satisfies PanelHistoryState, "", sectionHash(id));
+        pushedPanelEntryRef.current = true;
       }, delay);
     },
     [activeSection, emitPress, rippleFor, reducedMotion],
@@ -112,28 +142,48 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
     }
     if (activeSection === null) return;
     setActiveSection(null);
-    if ((window.history.state as typeof PANEL_HISTORY_STATE | null)?.portfolioPanel) {
+    const historyState = window.history.state as Partial<PanelHistoryState> | null;
+    if (pushedPanelEntryRef.current && historyState?.portfolioPanel) {
       window.history.back();
     } else {
       window.history.replaceState(null, "", window.location.pathname + window.location.search);
     }
   }, [activeSection, cancelPendingOpen]);
 
+  // Pressing a key only animates it; the section or action runs on click (release over the same key),
+  // so dragging off a key cancels, and touch taps carry the user activation popups and audio need.
   const handleKeyPointerDown = useCallback(
     (key: KeyDef) => {
       primeSound();
-      if (key.kind === "word" && key.section) {
-        openSection(key.section);
-        return;
-      }
-      emitPress([{ keyId: key.id, delayMs: 0 }]);
-      if (key.kind === "action" && key.action) performAction(key.action);
+      if (activeSection !== null || pendingOpenRef.current !== null) return;
+      if (key.kind === "word" && key.section) emitPress(rippleFor(key.section));
+      else emitPress([{ keyId: key.id, delayMs: 0 }]);
     },
-    [emitPress, openSection],
+    [activeSection, emitPress, rippleFor],
+  );
+
+  const handleKeyClick = useCallback(
+    (key: KeyDef) => {
+      if (key.kind === "word" && key.section) openSection(key.section, { ripple: false });
+      else if (key.kind === "action" && key.action) performAction(key.action);
+    },
+    [openSection],
   );
 
   useEffect(() => {
     setKeyboardMode(isWebGLAvailable() ? "3d" : "flat");
+  }, []);
+
+  // Safari only unlocks audio inside a user gesture. Prime on every click and keydown, before any handler runs,
+  // so the nav, the flat keyboard and typing unlock it too, not just the 3D keys.
+  useEffect(() => {
+    const options = { capture: true };
+    window.addEventListener("click", primeSound, options);
+    window.addEventListener("keydown", primeSound, options);
+    return () => {
+      window.removeEventListener("click", primeSound, options);
+      window.removeEventListener("keydown", primeSound, options);
+    };
   }, []);
 
   const handleContextLost = useCallback(() => {
@@ -186,13 +236,25 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
       }
       if (activeSection !== null || pendingOpenRef.current !== null) return;
 
-      primeSound();
+      // Enter opens whatever the hint names; a focused link or button handles its own Enter.
+      if (event.key === "Enter" && highlight && !target?.closest("a, button")) {
+        resetTyping();
+        if (highlight.kind === "section") {
+          openSection(highlight.id);
+        } else {
+          emitPress([{ keyId: highlight.id, delayMs: 0 }]);
+          performAction(highlight.id);
+        }
+        return;
+      }
+
       if (event.key === " ") emitPress([{ keyId: "space", delayMs: 0 }]);
       const result = advanceTyping(typingRef.current, event.key);
       typingRef.current = result.state;
       setTypedMatch(result.open ? null : result.match);
-      if (/^[a-z]$/i.test(event.key)) {
-        const key = keyForTypedLetter(event.key, result.match);
+      const letter = typedLetter(event.key);
+      if (letter) {
+        const key = keyForTypedLetter(letter, result.match);
         if (key) emitPress([{ keyId: key.id, delayMs: 0 }]);
       }
       if (result.open) {
@@ -205,7 +267,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeSection, closeSection, emitPress, openSection, resetTyping]);
+  }, [activeSection, closeSection, emitPress, highlight, openSection, resetTyping]);
 
   const toggleMuted = () => {
     const next = !muted;
@@ -254,6 +316,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
               paused={panelOpen && panelSettled}
               onHoverChange={handleHoverChange}
               onKeyPointerDown={handleKeyPointerDown}
+              onKeyClick={handleKeyClick}
               onContextLost={handleContextLost}
             />
           </KeyboardBoundary>
@@ -300,18 +363,7 @@ export function Portfolio({ sections }: { sections: Record<SectionId, ReactNode>
         </nav>
       </main>
       <AnimatePresence>
-        {panelOpen && (
-          <motion.div
-            key="panel-backdrop"
-            className="panel-backdrop"
-            aria-hidden="true"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: reducedMotion ? 0 : 0.25 }}
-            onClick={closeSection}
-          />
-        )}
+        {panelOpen && <PanelBackdrop key="panel-backdrop" reducedMotion={reducedMotion} onClose={closeSection} />}
       </AnimatePresence>
       {SECTIONS.map((section) => (
         <SectionPanel
